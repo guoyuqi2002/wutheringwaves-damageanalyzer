@@ -28,17 +28,27 @@ class _Track:
     unknown: bool = False
 
 
+@dataclass
+class _SlotStats:
+    damage: int = 0
+    active_seconds: float = 0.0
+
+
 class DamageTracker:
     """Tracks damage detections across frames and counts each stable number once."""
 
     def __init__(self) -> None:
         self.total_damage = 0
         self.unknown_count = 0
+        self.active_slot = 1
+        self.slot_stats = {slot: _SlotStats() for slot in (1, 2, 3)}
         self._tracks: list[_Track] = []
         self._combat_started_at: Optional[float] = None
+        self._last_stats_at = time.monotonic()
 
     def update(self, detections: list[dict]) -> dict:
         now = time.monotonic()
+        self._update_active_time(now)
         valid_detections = self._filter_detections(detections)
         self._mark_overlaps_unknown(valid_detections)
 
@@ -72,6 +82,7 @@ class DamageTracker:
                 self.unknown_count += 1
             else:
                 self.total_damage += track.value
+                self.slot_stats[self.active_slot].damage += track.value
                 if self._combat_started_at is None:
                     self._combat_started_at = now
 
@@ -84,23 +95,61 @@ class DamageTracker:
     def reset(self) -> None:
         self.total_damage = 0
         self.unknown_count = 0
+        self.active_slot = 1
+        self.slot_stats = {slot: _SlotStats() for slot in (1, 2, 3)}
         self._tracks.clear()
         self._combat_started_at = None
+        self._last_stats_at = time.monotonic()
+
+    def set_active_slot(self, slot: int) -> None:
+        if slot not in self.slot_stats:
+            raise ValueError("slot must be 1, 2, or 3")
+
+        now = time.monotonic()
+        self._update_active_time(now)
+        self.active_slot = slot
 
     def stats(self, now: Optional[float] = None) -> dict:
         current_time = now or time.monotonic()
+        self._update_active_time(current_time)
         elapsed = 0.0
         if self._combat_started_at is not None:
             elapsed = max(0.0, current_time - self._combat_started_at)
 
         dps = self.total_damage / elapsed if elapsed > 0 else 0.0
+        slots = {}
+        for slot, slot_stats in self.slot_stats.items():
+            slot_dps = (
+                slot_stats.damage / slot_stats.active_seconds
+                if slot_stats.active_seconds > 0
+                else 0.0
+            )
+            percent = (
+                slot_stats.damage / self.total_damage * 100
+                if self.total_damage > 0
+                else 0.0
+            )
+            slots[slot] = {
+                "damage": slot_stats.damage,
+                "active_seconds": slot_stats.active_seconds,
+                "dps": slot_dps,
+                "percent": percent,
+            }
+
         return {
             "total_damage": self.total_damage,
             "dps": dps,
             "elapsed_time": elapsed,
             "unknown": self.unknown_count,
             "active_tracks": len(self._tracks),
+            "active_slot": self.active_slot,
+            "slots": slots,
         }
+
+    def _update_active_time(self, now: float) -> None:
+        delta = max(0.0, now - self._last_stats_at)
+        self.slot_stats[self.active_slot].active_seconds += delta
+        self._last_stats_at = now
 
     def _filter_detections(self, detections: list[dict]) -> list[dict]:
         valid = []

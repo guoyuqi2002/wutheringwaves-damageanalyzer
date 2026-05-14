@@ -19,6 +19,7 @@ class DamageAnalyzerApp:
         self.capture = WindowCapture(roi=DAMAGE_ROI)
         self.ocr = DamageOCR(mock=MOCK_OCR)
         self.tracker = DamageTracker()
+        self.overlay.active_slot_changed.connect(self.tracker.set_active_slot)
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.tick)
@@ -44,6 +45,8 @@ class DamageAnalyzerApp:
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setApplicationName("Damage Analyzer")
+    app.setApplicationDisplayName("Damage Analyzer")
     analyzer = DamageAnalyzerApp()
     app.aboutToQuit.connect(analyzer.close)
     analyzer.start()
